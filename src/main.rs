@@ -15,7 +15,7 @@ fn main() -> Result<(), String> {
     let mut cpu = hardware::CPU::new();
 
     cpu.load_ram(&FONT_SET, 0x50);
-    cpu.load_ram(include_bytes!("../IBM Logo.ch8"), 0x200);
+    cpu.load_ram(include_bytes!("../test_opcode.ch8"), 0x200);
 
     cpu.start();
 
