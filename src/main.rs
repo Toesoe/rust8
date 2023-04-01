@@ -15,7 +15,7 @@ fn main() -> Result<(), String> {
     let mut cpu = hardware::CPU::new();
 
     cpu.load_ram(&FONT_SET, 0x50);
-    cpu.load_ram(include_bytes!("../test_opcode.ch8"), 0x200);
+    cpu.load_ram(include_bytes!("../chip8-test-suite.ch8"), 0x200);
 
     cpu.start();
 
@@ -24,24 +24,25 @@ fn main() -> Result<(), String> {
     'running: loop {
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
+                Event::Quit { .. } => break 'running,
+                Event::KeyDown { keycode: Some(keycode), .. } => {
+                    match keycode {
+                        Keycode::Num1 | Keycode::Num2 | Keycode::Num3 | Keycode::Num4 |
+                        Keycode::Q    | Keycode::W    | Keycode::E    | Keycode::R    |
+                        Keycode::A    | Keycode::S    | Keycode::D    | Keycode::F    |
+                        Keycode::Z    | Keycode::X    | Keycode::C    | Keycode::V
+                        => cpu.set_input(keycode),
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
         }
-        let instr = cpu.fetch();
-        cpu.decode(instr);
+        cpu.cycle();
 
         if cpu.disp_changed {
             draw.update(&mut cpu)?;
             cpu.disp_changed = false;
-        }
-
-        if cpu.pc == 0x284 {
-            println!("ASD");
         }
     }
     Ok(())

@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 sdl2 = "0.35.2"
 array2d = "0.3.0"
+rand = "0.8.5"

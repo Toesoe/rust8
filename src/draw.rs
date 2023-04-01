@@ -1,7 +1,6 @@
 extern crate sdl2;
 
 use crate::hardware;
-use crate::hardware::CHIP8_WIDTH;
 
 use sdl2::render::Canvas;
 use sdl2::rect::Rect;
