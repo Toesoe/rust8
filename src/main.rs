@@ -1,48 +1,53 @@
 extern crate sdl2;
 
 mod hardware;
-mod draw;
+mod render;
 mod font;
 
 use crate::font::FONT_SET;
 
-use draw::Drawing;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
+use std::collections::HashSet;
+
 fn main() -> Result<(), String> {
-    let mut draw = Drawing::new(true)?;
-    let mut cpu = hardware::CPU::new();
+    let mut renderer = render::Render::new("Chip8", hardware::CHIP8_WIDTH * hardware::MULTIPLIER, hardware::CHIP8_HEIGHT * hardware::MULTIPLIER, true)?;
+    let mut chip8 = hardware::Chip8::new();
 
-    cpu.load_ram(&FONT_SET, 0x50);
-    cpu.load_ram(include_bytes!("../chip8-test-suite.ch8"), 0x200);
+    chip8.load_ram(&FONT_SET, 0x50);
+    chip8.load_ram(include_bytes!("../chip8-test-suite.ch8"), 0x200);
 
-    cpu.start();
+    chip8.start();
 
-    let mut event_pump = draw.context.event_pump()?;
+    renderer.sound.resume();
+
+    let mut fixedstep = fixedstep::FixedStep::start(60.0);
 
     'running: loop {
-        for event in event_pump.poll_iter() {
+        while fixedstep.update() {
+            chip8.decrease_timers();
+            if chip8.tim_snd == 0 {
+                renderer.sound.pause();
+            }
+        }
+        let _delta = fixedstep.render_delta();
+
+        for event in renderer.event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'running,
                 Event::KeyDown { keycode: Some(keycode), .. } => {
-                    match keycode {
-                        Keycode::Num1 | Keycode::Num2 | Keycode::Num3 | Keycode::Num4 |
-                        Keycode::Q    | Keycode::W    | Keycode::E    | Keycode::R    |
-                        Keycode::A    | Keycode::S    | Keycode::D    | Keycode::F    |
-                        Keycode::Z    | Keycode::X    | Keycode::C    | Keycode::V
-                        => cpu.set_input(keycode),
-                        _ => {}
-                    }
-                }
+                        chip8.set_input(keycode);
+                },
                 _ => {}
             }
         }
-        cpu.cycle();
 
-        if cpu.disp_changed {
-            draw.update(&mut cpu)?;
-            cpu.disp_changed = false;
+        chip8.cycle();
+
+        if chip8.vram_changed {
+            renderer.update(chip8.get_vram())?;
+            chip8.vram_changed = false;
         }
     }
     Ok(())

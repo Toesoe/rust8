@@ -1,7 +1,4 @@
 use rand::Rng;
-use std::io;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
 
 use array2d::{Array2D, Error};
 use sdl2::keyboard::Keycode;
@@ -15,6 +12,8 @@ pub const RAM_SIZE: usize = 4096;
 pub const V_REG_COUNT: usize = 16;
 pub const STACK_SIZE: usize = 16;
 
+pub const KEY_COUNT: usize = 16;
+
 pub enum PC {
     // keep current PC value
     Keep = 0,
@@ -24,7 +23,7 @@ pub enum PC {
     Skip = 2,
 }
 
-pub struct CPU {
+pub struct Chip8 {
     pub pc: usize,
     pub sp: usize,
     pub stack: Vec<usize>,
@@ -32,17 +31,15 @@ pub struct CPU {
     pub v: [u8; V_REG_COUNT],
     pub tim_delay: u8,
     pub tim_snd: u8,
-    pub ram: [u8; RAM_SIZE],
-    pub disp: Array2D<bool>,
-    pub disp_changed: bool,
-    pub key: u8,
-    pub key_pressed: bool,
-    pub key_processed: bool,
+    ram: [u8; RAM_SIZE],
+    vram: Array2D<bool>,
+    pub vram_changed: bool,
+    pub keys: [bool; KEY_COUNT],
 }
 
-impl CPU {
+impl Chip8 {
     pub fn new() -> Self {
-        CPU {
+        Chip8 {
             pc: 0x0,
             sp: 0x0,
             stack: Vec::with_capacity(STACK_SIZE),
@@ -51,11 +48,9 @@ impl CPU {
             tim_delay: 255,
             tim_snd: 255,
             ram: [0x0; RAM_SIZE],
-            disp: Array2D::filled_with(false, CHIP8_HEIGHT as usize, CHIP8_WIDTH as usize),
-            disp_changed: false,
-            key: 0xFF,
-            key_pressed: false,
-            key_processed: false,
+            vram: Array2D::filled_with(false, CHIP8_HEIGHT as usize, CHIP8_WIDTH as usize),
+            vram_changed: false,
+            keys: [false; KEY_COUNT],
         }
     }
 
@@ -69,11 +64,20 @@ impl CPU {
     }
 
     pub fn get_vram(&mut self) -> &Array2D<bool> {
-        return &self.disp;
+        return &self.vram;
+    }
+
+    pub fn decrease_timers(&mut self) {
+        if self.tim_delay > 0 {
+            self.tim_delay -= self.tim_delay;
+        }
+        if self.tim_snd > 0 {
+            self.tim_snd -= self.tim_snd;
+        }
     }
 
     pub fn set_input(&mut self, key: Keycode) {
-        self.key = match key {
+        let index = match key {
             Keycode::Num1 => Some(0x1),
             Keycode::Num2 => Some(0x2),
             Keycode::Num3 => Some(0x3),
@@ -91,54 +95,55 @@ impl CPU {
             Keycode::C => Some(0xb),
             Keycode::V => Some(0xf),
             _ => None,
+        };
+
+        if index != None {
+            self.keys[index.unwrap()] = true;
         }
-        .unwrap();
-        self.key_pressed = true;
     }
+
 
     pub fn cycle(&mut self) -> Result<(), Error> {
         let opcode = (self.ram[self.pc] as usize) << 8 | (self.ram[self.pc + 1] as usize);
+
         let mut nibs: Vec<usize> = Vec::new();
 
-        let mut step_pc: PC = PC::Keep;
-
         for n in 0..4 {
-            let nib = (opcode & (0xF000 >> (n * 4))) >> (12 - (n * 4));
-            nibs.push(nib);
+            nibs.push((opcode & (0xF000 >> (n * 4))) >> (12 - (n * 4)));
         }
 
-        println!("executing {:#0x}", opcode);
+        println!("executing {:#0x} @ ROM {:#0x}", opcode, self.pc - 0x200);
 
-        step_pc = match nibs[0] {
+        let step_pc = match nibs[0] {
             0x0 => self.op_0xxx(opcode),
-            0x1 => {
+            0x1 => { // Jump to address NNN
                 self.pc = (opcode & 0xFFF) as usize;
                 PC::Keep
-            } // Jump to address NNN
+            }
             0x2 => self.op_2xxx(opcode),
             0x3 | 0x4 | 0x5 => self.op_3xxx_4xxx_5xxx(&nibs),
             0x6 | 0x7 => self.op_6xxx_7xxx(&nibs),
             0x8 => self.op_8xxx(&nibs),
-            0x9 => {
+            0x9 => { // skip if Vx != Vy
                 if self.v[nibs[1]] != self.v[nibs[2]] {
                     PC::Skip
                 } else {
                     PC::Step
                 }
-            } // skip if Vx != Vy
-            0xA => {
+            }
+            0xA => { // Store memory address NNN in register I
                 self.i = (opcode & 0xFFF) as usize;
                 PC::Step
-            } // Store memory address NNN in register I
-            0xB => {
+            }
+            0xB => { // Jump to address NNN + V0
                 self.pc = (opcode & 0xFFF) + self.v[0] as usize;
                 PC::Keep
-            } // Jump to address NNN + V0
-            0xC => {
+            }
+            0xC => { // Set VX to a random number with a mask of NN
                 self.v[nibs[1]] =
                     rand::thread_rng().gen_range(0..=255) & (((nibs[2] << 4) | nibs[3]) as u8);
                 PC::Step
-            } // Set VX to a random number with a mask of NN
+            }
             0xD => self.op_Dxxx(&nibs),
             0xE => self.op_Exxx(&nibs),
             0xF => self.op_Fxxx(&nibs),
@@ -165,9 +170,9 @@ impl CPU {
 
         match opcode {
             0xE0 => {
-                self.disp =
+                self.vram =
                     Array2D::filled_with(false, CHIP8_HEIGHT as usize, CHIP8_WIDTH as usize);
-                self.disp_changed = true;
+                self.vram_changed = true;
             }
             0xEE => {
                 self.pc = self.stack.pop().unwrap();
@@ -307,7 +312,7 @@ impl CPU {
         let mut row_count = 0;
 
         self.v[15] = 0x0; // VF == 0
-        self.disp_changed = true;
+        self.vram_changed = true;
 
         // do some unpacking. each byte corresponds to 8 pixels
         while sprite_height > 0 {
@@ -318,10 +323,10 @@ impl CPU {
                     // take endianness into account :)
                     let px_val = (self.ram[self.i + row_count] & (1 << 7 - n)) != 0;
 
-                    if *self.disp.get(y + row_count, x + n).unwrap() && px_val {
+                    if self.v[15] != 0x01 && *self.vram.get(y + row_count, x + n).unwrap() && px_val {
                         self.v[15] = 0x01; // VF == 1 when a pixel has been turned off
                     }
-                    self.disp.set(y + row_count, x + n, px_val).unwrap();
+                    self.vram.set(y + row_count, x + n, px_val).unwrap();
                 }
             }
 
@@ -343,24 +348,20 @@ impl CPU {
     fn op_Exxx(&mut self, nibs: &Vec<usize>) -> PC {
         let mut ret = PC::Step;
 
-        if !self.key_processed {
             match ((nibs[2] << 4) | nibs[3]) as u8 {
                 0x9E => {
-                    if self.key == self.v[nibs[1]] {
+                    if self.keys[self.v[nibs[1]] as usize] {
                         ret = PC::Skip;
                     }
-                }
+                },
                 0xA1 => {
-                    if self.key != self.v[nibs[1]] {
+                    if !self.keys[self.v[nibs[1]] as usize] {
                         ret = PC::Skip;
                     }
-                }
+                },
                 _ => panic!("invalid instruction"),
             }
-            
-            self.key_processed = true;
-        }
-
+        self.keys.fill(false);
         return ret;
     }
 
@@ -376,12 +377,14 @@ impl CPU {
 
             // Wait for a keypress and store the result in register VX
             0x0A => {
-                if self.key_pressed {
-                    self.v[nibs[1]] = self.key;
-                    self.key_pressed = false;
-                    self.key_processed = false;
-                } else {
-                    ret = PC::Keep;
+                ret = PC::Keep;
+
+                for (x, key) in self.keys.into_iter().enumerate() {
+                    if key {
+                        self.v[nibs[1]] = x as u8;
+                        ret = PC::Step;
+                        break;
+                    }
                 }
             }
 

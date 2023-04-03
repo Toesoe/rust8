@@ -7,37 +7,93 @@ use sdl2::rect::Rect;
 use sdl2::rect::Point;
 use sdl2::pixels::Color;
 
-pub struct Drawing {
-    pub context: sdl2::Sdl,
+use sdl2::audio::{AudioCallback, AudioSpecDesired, AudioDevice};
+
+use array2d::Array2D;
+
+pub struct SquareWave {
+    phase_inc: f32,
+    phase: f32,
+    volume: f32
+}
+
+impl AudioCallback for SquareWave {
+    type Channel = f32;
+
+    fn callback(&mut self, out: &mut [f32]) {
+        // Generate a square wave
+        for x in out.iter_mut() {
+            *x = if self.phase <= 0.5 {
+                self.volume
+            } else {
+                -self.volume
+            };
+            self.phase = (self.phase + self.phase_inc) % 1.0;
+        }
+    }
+}
+
+pub struct Render {
     pub canvas: Canvas<sdl2::video::Window>,
+    pub event_pump: sdl2::EventPump,
+    pub timer: sdl2::TimerSubsystem,
+    pub sound: AudioDevice<SquareWave>,
+    pub width: u32,
+    pub height: u32,
     pub draw_grid: bool,
 }
 
-impl Drawing {
-    pub fn new(draw_grid: bool) -> Result<Drawing, String> {
-        let context = sdl2::init().unwrap();
+impl Render {
+    pub fn new(title: &str,
+            width: u32,
+            height: u32,
+            draw_grid: bool
+    ) -> Result<Render, String> {
 
-        let video_subsystem = context.video().unwrap();
-    
-        let window = video_subsystem
-            .window("rust-sdl2 demo: Video", hardware::CHIP8_WIDTH * hardware::MULTIPLIER, hardware::CHIP8_HEIGHT * hardware::MULTIPLIER)
-            .position_centered()
-            .opengl()
-            .build()
-            .unwrap();
-    
-        let canvas = window.into_canvas().build().unwrap();
+     let context = sdl2::init()?;
+     let video = context.video()?;
+     let window = video.window(title, width, height)
+         .position_centered()
+         .opengl()
+         .build()
+         .map_err(|e| e.to_string())?;
 
-        Ok(Drawing {context, canvas, draw_grid})
+     let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+     let event_pump = context.event_pump()?;
+     let timer_subsystem = context.timer()?;
+     let audio_subsystem = context.audio()?;
+
+     let desired_spec = AudioSpecDesired {
+        freq: Some(44100),
+        channels: Some(1),  // mono
+        samples: None       // default sample size
+    };
+
+    let audio_device = audio_subsystem.open_playback(None, &desired_spec, |spec| {
+        // initialize the audio callback
+        SquareWave {
+            phase_inc: 440.0 / spec.freq as f32,
+            phase: 0.0,
+            volume: 0.25
+        }
+    }).unwrap();
+     
+     Ok(Render {
+         canvas: canvas,
+         event_pump: event_pump,
+         timer: timer_subsystem,
+         sound: audio_device,
+         width: width,
+         height: height,
+         draw_grid: draw_grid,
+     })
     }
     
     /**
      * Update canvas with VRAM data.
      */
-    pub fn update(&mut self, cpu: &mut hardware::CPU) -> Result<(), String> {
-        let vram_ref = cpu.get_vram();
-
-        for (y, row) in vram_ref.rows_iter().enumerate() {
+    pub fn update(&mut self, chip8_vram: &Array2D<bool>) -> Result<(), String> {
+        for (y, row) in chip8_vram.rows_iter().enumerate() {
             for (x, px) in row.enumerate() {
                 if *px {
                     self.canvas.set_draw_color(Color::GREEN);
