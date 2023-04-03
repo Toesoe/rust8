@@ -42,7 +42,7 @@ impl Chip8 {
         Chip8 {
             pc: 0x0,
             sp: 0x0,
-            stack: Vec::with_capacity(STACK_SIZE),
+            stack: Vec::new(),
             i: 0x0,
             v: [0x0; V_REG_COUNT],
             tim_delay: 255,
@@ -76,7 +76,7 @@ impl Chip8 {
         }
     }
 
-    pub fn set_input(&mut self, key: Keycode) {
+    pub fn set_input(&mut self, key: Keycode, key_down: bool) {
         let index = match key {
             Keycode::Num1 => Some(0x1),
             Keycode::Num2 => Some(0x2),
@@ -98,7 +98,7 @@ impl Chip8 {
         };
 
         if index != None {
-            self.keys[index.unwrap()] = true;
+            self.keys[index.unwrap()] = key_down;
         }
     }
 
@@ -176,6 +176,8 @@ impl Chip8 {
             }
             0xEE => {
                 self.pc = self.stack.pop().unwrap();
+                ret = PC::Keep;
+                self.sp -= 1;
             }
             _ => {
                 self.pc = opcode;
@@ -190,7 +192,8 @@ impl Chip8 {
      * `2NNN`: Execute subroutine starting at address NNN
      */
     fn op_2xxx(&mut self, opcode: usize) -> PC {
-        self.stack.push(self.pc);
+        self.stack.push(self.pc + 2);
+        self.sp += 1;
         self.pc = (opcode & 0xFFF) as usize;
 
         return PC::Keep;
@@ -222,10 +225,7 @@ impl Chip8 {
         if nibs[0] == 0x6 {
             self.v[nibs[1]] = ((nibs[2] << 4) | nibs[3]) as u8;
         } else if nibs[0] == 0x7 {
-            let val = ((nibs[2] << 4) | nibs[3]) as u8;
-            if self.v[nibs[1]].checked_add(val) == None {
-                self.v[nibs[1]] = ((self.v[nibs[1]] as u16 + val as u16) - 256) as u8;
-            }
+            self.v[nibs[1]] = (self.v[nibs[1]] as u16 + ((nibs[2] << 4) | nibs[3]) as u16) as u8
         }
 
         return PC::Step;
@@ -261,18 +261,21 @@ impl Chip8 {
             3 => self.v[nibs[1]] ^= self.v[nibs[2]],
 
             4 => {
-                if self.v[nibs[1]].checked_add(self.v[nibs[2]]) == None {
-                    self.v[15] = 0x01;
-                    self.v[nibs[1]] =
-                        ((self.v[nibs[1]] as u16 + self.v[nibs[2]] as u16) - 256) as u8;
-                }
+                let val = self.v[nibs[1]] as u16 + self.v[nibs[2]] as u16;
+
+                if val > 255 { self.v[15] = 0x01;}
+                else { self.v[15] = 0x00;}
+                self.v[nibs[1]] = val as u8;
             }
 
             5 => {
-                if self.v[nibs[1]].checked_sub(self.v[nibs[2]]) == None {
-                    self.v[15] = 0x01;
-                    self.v[nibs[1]] = (self.v[nibs[1]] as i16 - self.v[nibs[2]] as i16) as u8;
+                let val = self.v[nibs[1]] as i16 - self.v[nibs[2]] as i16;
+
+                if val < 0 {
+                    self.v[15] = 0x00;
                 }
+                else { self.v[15] = 0x01;}
+                self.v[nibs[1]] = val as u8;
             }
 
             6 => {
@@ -281,13 +284,12 @@ impl Chip8 {
             }
 
             7 => {
-                let value = self.v[nibs[2]].checked_sub(self.v[nibs[1]]);
-                if value == None {
-                    self.v[15] = 0x01;
-                    self.v[nibs[1]] = 0;
-                } else {
-                    self.v[nibs[1]] = value.unwrap();
-                }
+                let val = self.v[nibs[2]] as i16 - self.v[nibs[1]] as i16;
+
+                if val < 0 { self.v[15] &= 0x00; } 
+                else { self.v[15] = 0x01; }
+
+                self.v[nibs[1]] = val as u8;
             }
             0xE => {
                 self.v[15] = (self.v[nibs[2]] >> 7) & 1;
@@ -317,25 +319,27 @@ impl Chip8 {
         // do some unpacking. each byte corresponds to 8 pixels
         while sprite_height > 0 {
             for n in 0..8 {
-                if x + n == CHIP8_WIDTH as usize {
+                if x + n >= CHIP8_WIDTH as usize {
                     break;
-                } else {
-                    // take endianness into account :)
-                    let px_val = (self.ram[self.i + row_count] & (1 << 7 - n)) != 0;
-
-                    if self.v[15] != 0x01 && *self.vram.get(y + row_count, x + n).unwrap() && px_val {
-                        self.v[15] = 0x01; // VF == 1 when a pixel has been turned off
-                    }
-                    self.vram.set(y + row_count, x + n, px_val).unwrap();
+                } 
+                
+                if y + row_count >= CHIP8_HEIGHT as usize {
+                    break;
                 }
+
+                // take endianness into account :)
+                let px_val = (self.ram[self.i + row_count] & (1 << 7 - n)) != 0;
+
+                if self.v[15] != 0x01 && *self.vram.get(y + row_count, x + n).unwrap() && px_val {
+                    self.v[15] = 0x01; // VF == 1 when a pixel has been turned off
+                }
+                self.vram.set(y + row_count, x + n, px_val).unwrap();
             }
 
             row_count += 1;
             sprite_height -= 1;
 
-            if y + row_count == CHIP8_HEIGHT as usize {
-                break;
-            }
+            
         }
 
         return PC::Step;
@@ -348,20 +352,26 @@ impl Chip8 {
     fn op_Exxx(&mut self, nibs: &Vec<usize>) -> PC {
         let mut ret = PC::Step;
 
-            match ((nibs[2] << 4) | nibs[3]) as u8 {
-                0x9E => {
-                    if self.keys[self.v[nibs[1]] as usize] {
-                        ret = PC::Skip;
-                    }
-                },
-                0xA1 => {
-                    if !self.keys[self.v[nibs[1]] as usize] {
-                        ret = PC::Skip;
-                    }
-                },
-                _ => panic!("invalid instruction"),
+        for (x, key) in self.keys.into_iter().enumerate() {
+            if key {
+                match ((nibs[2] << 4) | nibs[3]) as u8 {
+                    0x9E => {
+                        if self.v[nibs[1]] as usize == x {
+                            ret = PC::Skip;
+                        }
+                    },
+                    0xA1 => {
+                        if self.v[nibs[1]] as usize != x {
+                            ret = PC::Skip;
+                        }
+                    },
+                    _ => panic!("invalid instruction"),
+                }
             }
+        }
+
         self.keys.fill(false);
+
         return ret;
     }
 
@@ -386,6 +396,8 @@ impl Chip8 {
                         break;
                     }
                 }
+
+                self.keys.fill(false);
             }
 
             // Set the delay timer to the value of register VX
@@ -396,9 +408,11 @@ impl Chip8 {
 
             // Add the value stored in register VX to register I
             0x1E => {
-                if self.i.checked_add(self.v[nibs[1]] as usize) == None {
+                let val = self.i.checked_add(self.v[nibs[1]] as usize);
+                if val == None {
                     self.i = 65535;
                 }
+                else {self.i = val.unwrap(); }
             }
 
             // Set I to the memory address of the sprite data corresponding to the hexadecimal digit stored in register VX
