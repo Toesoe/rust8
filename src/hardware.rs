@@ -1,7 +1,8 @@
-use rand::Rng;
+use ::rand::Rng;
 
 use array2d::{Array2D, Error};
-use sdl2::keyboard::Keycode;
+
+use macroquad::prelude::*;
 
 pub const CHIP8_WIDTH: u32 = 64;
 pub const CHIP8_HEIGHT: u32 = 32;
@@ -22,6 +23,25 @@ pub enum PC {
     // increment PC with 4
     Skip = 2,
 }
+
+const KEYS: &'static [KeyCode] = &[ // 0x0 -> 0xF
+    KeyCode::X,
+    KeyCode::Key1,
+    KeyCode::Key2,
+    KeyCode::Key3,
+    KeyCode::Q,
+    KeyCode::W,
+    KeyCode::E,
+    KeyCode::A,
+    KeyCode::S,
+    KeyCode::D,
+    KeyCode::Z,
+    KeyCode::C,
+    KeyCode::Key4,
+    KeyCode::R,
+    KeyCode::F,
+    KeyCode::V
+];
 
 pub struct Chip8 {
     pub pc: usize,
@@ -76,32 +96,16 @@ impl Chip8 {
         }
     }
 
-    pub fn set_input(&mut self, key: Keycode, key_down: bool) {
-        let index = match key {
-            Keycode::Num1 => Some(0x1),
-            Keycode::Num2 => Some(0x2),
-            Keycode::Num3 => Some(0x3),
-            Keycode::Num4 => Some(0xc),
-            Keycode::Q => Some(0x4),
-            Keycode::W => Some(0x5),
-            Keycode::E => Some(0x6),
-            Keycode::R => Some(0xd),
-            Keycode::A => Some(0x7),
-            Keycode::S => Some(0x8),
-            Keycode::D => Some(0x9),
-            Keycode::F => Some(0xe),
-            Keycode::Z => Some(0xa),
-            Keycode::X => Some(0x0),
-            Keycode::C => Some(0xb),
-            Keycode::V => Some(0xf),
-            _ => None,
-        };
-
-        if index != None {
-            self.keys[index.unwrap()] = key_down;
+    fn get_keys(&mut self) {
+        for (x, key) in KEYS.iter().enumerate() {
+            if is_key_down(*key) {
+                self.keys[x] = true;
+            }
+            else {
+                self.keys[x] = false;
+            }
         }
     }
-
 
     pub fn cycle(&mut self) -> Result<(), Error> {
         let opcode = (self.ram[self.pc] as usize) << 8 | (self.ram[self.pc + 1] as usize);
@@ -113,6 +117,8 @@ impl Chip8 {
         }
 
         println!("executing {:#0x} @ ROM {:#0x}", opcode, self.pc - 0x200);
+
+        self.get_keys();
 
         let step_pc = match nibs[0] {
             0x0 => self.op_0xxx(opcode),
@@ -141,7 +147,7 @@ impl Chip8 {
             }
             0xC => { // Set VX to a random number with a mask of NN
                 self.v[nibs[1]] =
-                    rand::thread_rng().gen_range(0..=255) & (((nibs[2] << 4) | nibs[3]) as u8);
+                    ::rand::thread_rng().gen_range(0..=255) & (((nibs[2] << 4) | nibs[3]) as u8);
                 PC::Step
             }
             0xD => self.op_Dxxx(&nibs),
@@ -280,7 +286,7 @@ impl Chip8 {
 
             6 => {
                 self.v[15] = self.v[nibs[2]] & 1;
-                self.v[nibs[1]] = self.v[nibs[2]] >> 1;
+                self.v[nibs[1]] /*= self.v[nibs[2]]*/ >>= 1;
             }
 
             7 => {
@@ -292,8 +298,8 @@ impl Chip8 {
                 self.v[nibs[1]] = val as u8;
             }
             0xE => {
-                self.v[15] = (self.v[nibs[2]] >> 7) & 1;
-                self.v[nibs[1]] = self.v[nibs[2]] << 1;
+                self.v[15] = self.v[nibs[2]] >> 7;
+                self.v[nibs[1]] /*= self.v[nibs[2]]*/ <<= 1;
             }
             _ => panic!("invalid instruction {:#0x} for 0x8xxx", nibs[3]),
         }

@@ -1,20 +1,23 @@
-extern crate sdl2;
-
 mod hardware;
-mod render;
 mod font;
 
 use crate::font::FONT_SET;
 
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
+use macroquad::prelude::*;
 
-use std::collections::HashSet;
+fn window_conf() -> Conf {
+    Conf {
+        window_title: "Rust8".to_owned(),
+        fullscreen: false,
+        window_width: (hardware::CHIP8_WIDTH * hardware::MULTIPLIER) as i32,
+        window_height: (hardware::CHIP8_HEIGHT * hardware::MULTIPLIER) as i32,
+        window_resizable: false,
+        ..Default::default()
+    }
+}
 
-use std::{thread, time};
-
-fn main() -> Result<(), String> {
-    let mut renderer = render::Render::new("Chip8", hardware::CHIP8_WIDTH * hardware::MULTIPLIER, hardware::CHIP8_HEIGHT * hardware::MULTIPLIER, true)?;
+#[macroquad::main(window_conf)]
+async fn main() {
     let mut chip8 = hardware::Chip8::new();
 
     chip8.load_ram(&FONT_SET, 0x50);
@@ -25,39 +28,28 @@ fn main() -> Result<(), String> {
 
     chip8.start();
 
-    renderer.sound.pause();
-
     let mut fixedstep = fixedstep::FixedStep::start(60.0);
 
-    'running: loop {
-        // while fixedstep.update() {
-        //     chip8.decrease_timers();
-        //     if chip8.tim_snd == 0 {
-        //         renderer.sound.pause();
-        //     }
-        // }
+    clear_background(BLACK);
 
-        for event in renderer.event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. } => break 'running,
-                Event::KeyDown { keycode: Some(keycode), .. } => {
-                    chip8.set_input(keycode, true);
-                },
-                Event::KeyUp { keycode: Some(keycode), .. } => {
-                    chip8.set_input(keycode, false);
-                },
-                _ => {}
-            }
+    loop {
+        while fixedstep.update() {
+            chip8.decrease_timers();
         }
 
         chip8.cycle();
 
-        if chip8.vram_changed {
-            renderer.update(chip8.get_vram())?;
-            chip8.vram_changed = false;
+        for (y, row) in chip8.get_vram().rows_iter().enumerate() {
+            for (x, px) in row.enumerate() {
+                if *px {
+                    draw_rectangle((x * hardware::MULTIPLIER as usize) as f32, (y * hardware::MULTIPLIER as usize) as f32, hardware::MULTIPLIER as f32, hardware::MULTIPLIER as f32, GREEN);
+                }
+                else {
+                    draw_rectangle((x * hardware::MULTIPLIER as usize) as f32, (y * hardware::MULTIPLIER as usize) as f32, hardware::MULTIPLIER as f32, hardware::MULTIPLIER as f32, BLACK);
+                }
+            }
         }
 
-        thread::sleep(time::Duration::from_millis(2));
+        next_frame().await
     }
-    Ok(())
 }
