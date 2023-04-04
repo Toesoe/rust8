@@ -25,17 +25,17 @@ fn main() -> Result<(), String> {
 
     chip8.start();
 
-    renderer.sound.pause();
+    renderer.sound.resume();
 
     let mut fixedstep = fixedstep::FixedStep::start(60.0);
 
     'running: loop {
-        // while fixedstep.update() {
-        //     chip8.decrease_timers();
-        //     if chip8.tim_snd == 0 {
-        //         renderer.sound.pause();
-        //     }
-        // }
+        while fixedstep.update() {
+            chip8.decrease_timers();
+            if chip8.tim_snd == 0 {
+                renderer.sound.pause();
+            }
+        }
 
         for event in renderer.event_pump.poll_iter() {
             match event {
